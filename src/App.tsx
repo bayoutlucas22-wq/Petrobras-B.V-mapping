@@ -11,8 +11,9 @@ import {
   type ReactFlowInstance,
   type NodeProps,
 } from 'reactflow'
-import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Landmark, Search, CircleDollarSign, X } from 'lucide-react'
+import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Landmark, Search, CircleDollarSign, X, Compass } from 'lucide-react'
 import { sourceLinks, studyTimeline } from './data'
+import contractsCsv from '../Consulta (15).csv?raw'
 import './styles.css'
 
 type ViewFilter = 'all' | 'supplier' | 'active' | 'completed' | 'cancelled' | `year-${string}`
@@ -187,16 +188,49 @@ export default function App() {
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   const [controlsOpen, setControlsOpen] = useState(true)
   const [leftPanelTab, setLeftPanelTab] = useState<'controls' | 'details'>('controls')
+  const [tourStep, setTourStep] = useState<number>(0)
+
+  const tourStepsData = useMemo(() => [
+    {
+      eyebrow: 'Study Tour · Step 1 of 4',
+      title: 'The Concentration of Value',
+      body: 'The offshore network is highly centralized. Almost all massive contract values — over US$ 121 billion — funnel into a handful of Dutch B.V. entities. While legally sound for tax routing and liability ring-fencing, this architecture creates a structural "Complexity Tax" on public legibility.',
+      insight: { label: 'Compliance Observation', text: 'Concentration is not misconduct. But when a large share of a state-owned enterprise\'s offshore value touches just 5–7 foreign legal wrappers, traditional audit tools lose resolution.' },
+      setup: () => { setGraphMode('structure'); setLeftPanelTab('controls'); setExpandedClusters(new Set()); if (flowInstance) flowInstance.fitView({ duration: 800 }) }
+    },
+    {
+      eyebrow: 'Study Tour · Step 2 of 4',
+      title: "The 'Soft Services' Dimension",
+      body: 'When we switch the map to the Services view, a different picture emerges. Alongside capital-intensive physical assets (FPSOs, rigs, subsea systems), we find significant clusters of intangible services — software, training, and consulting — routed through the same offshore B.V. wrappers.',
+      insight: { label: 'Why This Matters', text: 'Physical assets are verifiable. A drillship or FPSO is trackable in global shipping databases. An intangible service — like "remote technical support" — is not.' },
+      setup: () => { setGraphMode('services'); setExpandedClusters(new Set()); if (flowInstance) flowInstance.fitView({ duration: 800 }) }
+    },
+    {
+      eyebrow: 'Study Tour · Step 3 of 4',
+      title: 'The Supplier Opacity',
+      body: 'Analyzing the supplier dimension reveals entities like GEOQUEST SYSTEMS B.V. — a Schlumberger software subsidiary — with significant, highly concentrated contracts. Every contract was awarded via Inexigibilidade (Sole Source), invoking the "proprietary technology" exemption to bypass competitive bidding entirely.',
+      insight: { label: 'The Statutory Limit', text: 'The sole-source exemption is the correct legal mechanism for monopoly software. But when it is applied to multi-million dollar contracts routed offshore, the standard control (bidding) is eliminated, creating an audit blind spot.' },
+      setup: () => { setGraphMode('suppliers'); setExpandedClusters(new Set(['supplier-GEOQUEST SYSTEMS B.V.'])); if (flowInstance) setTimeout(() => flowInstance.fitView({ duration: 800 }), 100) }
+    },
+    {
+      eyebrow: 'Study Tour · Step 4 of 4',
+      title: 'The $60M Blind Spot',
+      body: 'Contract 4600568576: US$ 60,711,176.66 awarded to GEOQUEST SYSTEMS B.V. for "Technological Update and Remote Technical Support." Procurement route: INEXIGIBILIDADE. No competitive bids. No public price benchmark. The entire $60M rests on the assumption that a proprietary software vendor delivered fair market value.',
+      insight: { label: 'The Core Thesis', text: 'This is not an allegation. It is a demonstration of the governance gap. When legal compliance and public legibility diverge — as they do here — data-driven mapping tools become essential for independent oversight.' },
+      setup: () => { setGraphMode('suppliers'); setExpandedClusters(new Set(['supplier-GEOQUEST SYSTEMS B.V.'])); setLeftPanelTab('details'); if (flowInstance) setTimeout(() => flowInstance.fitView({ duration: 800 }), 100) }
+    }
+  ], [flowInstance])
 
   useEffect(() => {
-    fetch('/Consulta%20(15).csv')
-      .then(response => response.text())
-      .then(text => {
-        const parsed = parseContracts(text)
-        setContracts(parsed)
-        setSelectedId(parsed[0]?.contractNumber || '')
-      })
-      .catch(() => setContracts([]))
+    if (tourStep > 0 && tourStep <= tourStepsData.length) {
+      tourStepsData[tourStep - 1].setup()
+    }
+  }, [tourStep, tourStepsData])
+
+  useEffect(() => {
+    const parsed = parseContracts(contractsCsv)
+    setContracts(parsed)
+    setSelectedId(parsed[0]?.contractNumber || '')
   }, [])
 
   const grouped = useMemo(() => {
@@ -541,23 +575,6 @@ export default function App() {
     })
   }
 
-  function toggleAllContracts() {
-    if (expanded) {
-      setExpanded(false)
-      setExpandedClusters(new Set())
-      return
-    }
-    const defaultCluster = graphMode === 'suppliers'
-      ? supplierNodes[0]?.id
-      : graphMode === 'services'
-        ? serviceNodes[0]?.id
-        : 'status-Ativo'
-    if (!defaultCluster) return
-    setExpanded(true)
-    setExpandedClusters(new Set([defaultCluster]))
-    setFilter(graphMode === 'suppliers' ? 'all' : 'active')
-  }
-
   function changeGraphMode(mode: GraphMode) {
     setGraphMode(mode)
     setFilter('all')
@@ -601,12 +618,17 @@ export default function App() {
           <p className="lead">
             This version is data-driven: search, filter, expand clusters, and inspect contract records without flattening the structure into a static poster.
           </p>
-          <div className="hero-actions">
-            <a href="#graph" className="primary-action">Open the map <ArrowRight size={16} /></a>
-            <button className="secondary-action" type="button" onClick={toggleAllContracts}>
-              {expanded ? 'Collapse contracts' : 'Expand contracts'}
-            </button>
-          </div>
+          <div style={{ display:'flex', gap:'12px', marginTop:'24px' }}>
+              <a href="#graph" className="button primary-action">
+                Open the map <ArrowRight size={18} />
+              </a>
+              <button className="button outline" onClick={() => {
+                document.getElementById('graph')?.scrollIntoView({ behavior: 'smooth' })
+                setTimeout(() => setTourStep(1), 500)
+              }}>
+                <Compass size={18} /> Take Guided Tour
+              </button>
+            </div>
         </div>
         <div className="hero-aside">
           <div className="hero-aside-card">
@@ -895,6 +917,62 @@ export default function App() {
           </article>
         </section>
       </main>
+
+      {tourStep > 0 && (() => {
+        const step = tourStepsData[tourStep - 1]
+        return (
+          <div className="tour-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setTourStep(0) }}>
+            <div className="tour-modal">
+              <div className="tour-modal-header">
+                <div style={{ flex: 1 }}>
+                  <div className="tour-modal-eyebrow">
+                    <Compass size={14} />
+                    {step.eyebrow}
+                  </div>
+                  <h2 className="tour-modal-title">{step.title}</h2>
+                </div>
+                <button className="tour-modal-close" onClick={() => setTourStep(0)}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="tour-modal-body">
+                <p>{step.body}</p>
+                <div className="tour-modal-insight">
+                  <strong>{step.insight.label}</strong>
+                  {step.insight.text}
+                </div>
+              </div>
+              <div className="tour-modal-footer">
+                <div className="tour-progress">
+                  {tourStepsData.map((_, i) => (
+                    <div
+                      key={i}
+                      className={`tour-progress-dot${i === tourStep - 1 ? ' active' : ''}`}
+                      onClick={() => setTourStep(i + 1)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  ))}
+                </div>
+                <div className="tour-footer-actions">
+                  <button
+                    className="tour-btn"
+                    disabled={tourStep === 1}
+                    onClick={() => setTourStep(s => s - 1)}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    className="tour-btn primary"
+                    onClick={() => tourStep === tourStepsData.length ? setTourStep(0) : setTourStep(s => s + 1)}
+                  >
+                    {tourStep === tourStepsData.length ? 'Finish Tour' : 'Next →'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
