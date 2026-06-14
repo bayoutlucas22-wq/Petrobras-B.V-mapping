@@ -628,6 +628,28 @@ export default function App() {
           ))}
         </section>
 
+        <section className="thesis-grid">
+          <article className="thesis-card">
+            <h3>1. The Complexity Tax</h3>
+            <p>
+              When operations are routed through dense offshore networks, it levies a structural "complexity tax" on public legibility. 
+              The system is legally sound, but practically impossible for independent stakeholders to audit effectively without relational mapping tools.
+            </p>
+          </article>
+          <article className="thesis-card">
+            <h3>2. Limits of Compliance</h3>
+            <p>
+              A contract can be fully compliant while carrying high risk. High-value, intangible services (like software) awarded via sole-source exemptions to foreign entities bypass traditional bidding controls, shifting the burden of proof to utilization logs.
+            </p>
+          </article>
+          <article className="thesis-card">
+            <h3>3. Data-Driven Legibility</h3>
+            <p>
+              Offshore structures are necessary, but the data must be legible. This mapping tool demonstrates that complex corporate structures and massive contract volumes can be visually untangled, enabling true operational intelligence.
+            </p>
+          </article>
+        </section>
+
         <section className="section" id="graph">
           <div className="section-head">
             <div>
@@ -847,10 +869,10 @@ export default function App() {
               <FileSearch size={18} />
             </div>
             <ul className="bullets">
-              <li>We split the dataset into a hub, status clusters, year clusters, and contract-level nodes.</li>
-              <li>Cluster expansion is interactive, so the graph stays readable.</li>
-              <li>Search and filtering update both the nodes and the edges.</li>
-              <li>Values are study anchors, not proof of cash transfer or profit distribution.</li>
+              <li>We split the dataset into hubs, status clusters, year clusters, and contract-level nodes.</li>
+              <li>Cluster expansion is interactive, so the graph remains visually readable.</li>
+              <li>Search and filtering actively update both the node clusters and their connecting edges.</li>
+              <li>Contract values serve as structural study anchors, not proof of individual cash transfers.</li>
             </ul>
           </article>
 
