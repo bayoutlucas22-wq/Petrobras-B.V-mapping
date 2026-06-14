@@ -28,3 +28,7 @@ npm run build
 - This repository is framed as a study case, not a legal finding.
 - Evidence labels distinguish confirmed, partial, and unresolved relationships.
 - The graph is intended to be reactive and explorable, not a static infographic.
+New
+helios.dns-parking.com
+
+aster.dns-parking.com
