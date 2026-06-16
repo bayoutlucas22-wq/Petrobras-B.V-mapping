@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Background,
   Controls,
@@ -12,15 +12,16 @@ import {
   type NodeProps,
 } from 'reactflow'
 import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Landmark, Search, CircleDollarSign, X, Compass } from 'lucide-react'
-import Globe from 'react-globe.gl'
-import { sourceLinks, studyTimeline } from './data'
+import { sourceLinks, studyNodes, studyTimeline, type StudyNode } from './data'
 import contractsCsv from '../Consulta (17).csv?raw'
+import mergedContractsCsv from '../Consulta (19).csv?raw'
 import './styles.css'
 
 type ViewFilter = 'all' | 'supplier' | 'active' | 'completed' | 'cancelled' | `year-${string}`
 type ContractStatus = 'Ativo' | 'Concluído' | 'Cancelado' | 'Outros'
 type NodeKind = 'hub' | 'cluster' | 'contract'
 type GraphMode = 'structure' | 'suppliers' | 'services'
+type GlobeMode = 'bv' | 'companies' | 'cortex'
 
 type ContractRecord = {
   supplier: string
@@ -62,26 +63,55 @@ type GraphNodeData = {
   parentId?: string
 }
 
-type GlobeArc = {
+type FlowRegion = 'netherlands' | 'uk' | 'usa' | 'norway' | 'angola' | 'mexico' | 'canada' | 'brazil' | 'other'
+type FlowRegulator = 'ANP' | 'IBAMA' | 'IMO' | 'UKCS' | 'BSEE' | 'NOPSEMA' | 'ANPG' | 'CNH' | 'C-NLOPB'
+
+type PrecisionRoute = {
+  id: string
   entity: string
   category: string
-  route: 'contracting-source' | 'offshore-deployment'
-  value: number
+  amount: number
   score: number
-  startLat: number
-  startLng: number
-  endLat: number
-  endLng: number
-  color: string
+  routeType: GlobeMode
+  layer: 'bv' | 'company'
+  region: FlowRegion
+  regulator: FlowRegulator
+  confidence: string
 }
 
-type GlobePoint = {
+type PrecisionNode = {
+  id: string
   label: string
-  lat: number
-  lng: number
-  size: number
+  x: number
+  y: number
+  kind: 'source' | 'hub' | 'region' | 'regulator' | 'entity'
   color: string
+  meta?: string
 }
+
+const iogpCoverageTopics = [
+  { name: 'Engineering Standards', lane: 'Standards', coverage: 'direct' },
+  { name: 'Subsea', lane: 'Standards', coverage: 'direct' },
+  { name: 'JIP30 / Standards Solution', lane: 'Standards', coverage: 'contextual' },
+  { name: 'JIP33 / Procurement Specs', lane: 'Standards', coverage: 'contextual' },
+  { name: 'JIP35 / Offshore Structures', lane: 'Standards', coverage: 'contextual' },
+  { name: 'CFIHOS / JIP36', lane: 'Standards', coverage: 'contextual' },
+  { name: 'JIP39 / Normally Unattended Facilities', lane: 'Standards', coverage: 'contextual' },
+  { name: 'Safety / Life-Saving Rules', lane: 'Safety', coverage: 'direct' },
+  { name: 'Process Safety', lane: 'Safety', coverage: 'direct' },
+  { name: 'Well Control', lane: 'Safety', coverage: 'direct' },
+  { name: 'Health', lane: 'Safety', coverage: 'direct' },
+  { name: 'Environment', lane: 'Environment', coverage: 'direct' },
+  { name: 'Decommissioning', lane: 'Environment', coverage: 'direct' },
+  { name: 'Metocean', lane: 'Environment', coverage: 'contextual' },
+  { name: 'Sound & Marine Life JIP', lane: 'Environment', coverage: 'contextual' },
+  { name: 'Environmental Genomics', lane: 'Environment', coverage: 'contextual' },
+  { name: 'Europe', lane: 'Regions', coverage: 'direct' },
+  { name: 'Americas', lane: 'Regions', coverage: 'direct' },
+  { name: 'Asia-Pacific', lane: 'Regions', coverage: 'direct' },
+  { name: 'Middle East & Africa', lane: 'Regions', coverage: 'direct' },
+  { name: 'Advocacy / Policy', lane: 'Strategic', coverage: 'contextual' },
+] as const
 
 const filters: Array<{ key: ViewFilter; label: string }> = [
   { key: 'all', label: 'All' },
@@ -138,7 +168,7 @@ function parseCsvRows(csv: string) {
   return rows
 }
 
-function parseContracts(csv: string): ContractRecord[] {
+function parseContracts(csv: string, filter: 'bv' | 'non-bv' | 'all' = 'bv'): ContractRecord[] {
   const rows = parseCsvRows(csv.replace(/^\uFEFF/, ''))
   const headers = rows[0]
   return rows.slice(1).map(row => {
@@ -155,7 +185,12 @@ function parseContracts(csv: string): ContractRecord[] {
       currency: record['Valor do contrato'].replace(/[^\w]/g, '').match(/^[A-Z]+/)?.[0] || 'USD',
       procurement: record['Enquadramento do Processo'] || 'Não informado',
     }
-  }).filter(row => /B\.?\s*V\.?/i.test(row.supplier))
+  }).filter(row => {
+    const hasBv = /\bB\.?\s*V\.?\b/i.test(row.supplier)
+    if (filter === 'bv') return hasBv
+    if (filter === 'non-bv') return !hasBv
+    return true
+  })
 }
 
 function statusFor(record: ContractRecord): ContractStatus {
@@ -198,6 +233,39 @@ function canonicalEntityName(name: string) {
     .replace(/\s+/g, ' ')
     .replace(/\s+\(PNBV\)$/i, '')
     .trim()
+}
+
+function entityKey(name: string) {
+  return canonicalEntityName(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/bv$/, 'bv')
+}
+
+function buildEntityGroups(records: ContractRecord[]): EntityGroup[] {
+  const byCanonical = new Map<string, ContractRecord[]>()
+  for (const record of records) {
+    const canonical = canonicalEntityName(record.supplier)
+    byCanonical.set(canonical, [...(byCanonical.get(canonical) ?? []), record])
+  }
+  return [...byCanonical.entries()].map(([canonical, rows]) => {
+    const aliases = [...new Set(rows.map(item => item.supplier))].sort()
+    const amount = rows.reduce((sum, item) => sum + parseMoney(item.value), 0)
+    const category = categoryForEntity(canonical, rows)
+    const upstream = isUpstreamEntity(canonical)
+    const adjacent = !upstream
+    const aliasRisk = aliasRiskFor(aliases)
+    const procurementSensitive = rows.filter(isSensitiveProcurement).length
+    const score = scoreEntity(amount, rows.length, upstream, aliasRisk, procurementSensitive)
+    const reasons = [
+      `${rows.length} rows`,
+      `${aliases.length} label variant${aliases.length === 1 ? '' : 's'}`,
+      category,
+      aliasRisk === 'high' ? 'alias review needed' : aliasRisk === 'medium' ? 'alias merge candidate' : 'stable label set',
+      `${procurementSensitive} sensitive routes`,
+    ]
+    return { canonical, category, aliases, records: rows, amount, upstream, adjacent, aliasRisk, procurementSensitive, score, reasons }
+  }).sort((a, b) => b.score - a.score || b.amount - a.amount)
 }
 
 function isUpstreamEntity(name: string) {
@@ -246,18 +314,95 @@ function categoryColor(category: string) {
   return '#cbd5e1'
 }
 
-const brazilSource = { lat: -22.91, lng: -43.17, label: 'Petrobras contracting source / Brazil' }
-const netherlandsHub = { lat: 52.37, lng: 4.9, label: 'Netherlands B.V. wrapper layer' }
+const stageLabels = {
+  source: 'Brazil contracting source',
+  bvHub: 'Netherlands B.V. wrapper layer',
+  supplierHub: 'Brazil supplier clustering layer',
+  netherlands: 'Netherlands offshore wrapper',
+  uk: 'UK offshore wrapper',
+  usa: 'US Gulf / LLC route',
+  norway: 'Norway offshore route',
+  angola: 'Angola offshore route',
+  mexico: 'Mexico offshore route',
+  canada: 'Canada offshore route',
+  brazil: 'Brazil domestic service route',
+  other: 'Residual offshore route',
+} as const
 
-function destinationForEntity(entity: EntityGroup, index: number) {
-  const text = `${entity.canonical} ${entity.records.map(record => record.object).join(' ')}`.toUpperCase()
-  if (/BUZIOS|TAMANDARE/.test(text)) return { lat: -22.6, lng: -41.9, label: 'Buzios basin' }
-  if (/MERO|LIBRA/.test(text)) return { lat: -24.6, lng: -42.8, label: 'Mero / Libra' }
-  if (/MARLIM|RONCADOR|PAPA TERRA|TARTARUGA/.test(text)) return { lat: -22.3, lng: -40.2, label: 'Campos basin' }
-  if (/TUPI|GUARA|LAPA|SEPIA|SAPINHO/.test(text)) return { lat: -25.4, lng: -43.1, label: 'Santos basin' }
-  if (/DRILLING|SONDA|PERFURA/.test(text)) return { lat: -21.8 + index * 0.18, lng: -39.5 - index * 0.16, label: 'Offshore drilling arc' }
-  if (/PETROBRAS GLOBAL TRADING/.test(text)) return { lat: 1.35, lng: 103.82, label: 'Trading / logistics' }
-  return { lat: -23.0 + index * 0.12, lng: -43.2 + index * 0.08, label: 'Brazil / adjacent spend' }
+function parseStudyValue(value?: string) {
+  if (!value) return 0
+  const match = value.match(/([\d.]+)\s*([BMK])?/i)
+  if (!match) return 0
+  const base = Number(match[1])
+  if (!Number.isFinite(base)) return 0
+  const suffix = match[2]?.toUpperCase()
+  if (suffix === 'B') return base * 1_000_000_000
+  if (suffix === 'M') return base * 1_000_000
+  if (suffix === 'K') return base * 1_000
+  return base
+}
+
+function mapCategoryForNode(node: StudyNode) {
+  if (node.kind === 'hub') return 'Hub / trading wrapper'
+  if (node.kind === 'project') return 'FPSO / production SPV'
+  if (node.kind === 'field') return 'Field-linked wrapper'
+  return 'Adjacent vendor'
+}
+
+function textForEntity(entity: EntityGroup | StudyNode) {
+  return 'canonical' in entity
+    ? `${entity.canonical} ${entity.records.map(record => record.object).join(' ')}`
+    : `${entity.label} ${entity.summary} ${entity.tags.join(' ')}`
+}
+
+function regionForEntity(entity: EntityGroup | StudyNode): FlowRegion {
+  const upper = textForEntity(entity).toUpperCase()
+  if (/PETROBRAS NETHERLANDS|TUPI B\.V\.|MERO 2 B\.V\.|LIBRA MV31 B\.V\.|BUZIOS5 MV32 B\.V\.|SEPIA MV30 B\.V\.|MARLIM1 MV33 B\.V\.|YINSON/.test(upper)) return 'netherlands'
+  if (/ROLLS-ROYCE|BUREAU VERITAS|LRQA|DNV|ABS|UK|BRITAIN/.test(upper)) return 'uk'
+  if (/GEOQUEST|IBM BRASIL|CSC BRASIL|BEA SYSTEMS|INTERNET SECURITY SYSTEMS|AIMMS|SOFTWARE|DATA|LICENSE/.test(upper)) return 'usa'
+  if (/NORSOK|NORWAY|STAVANGER|OSLO/.test(upper)) return 'norway'
+  if (/ANGOLA|ANPG/.test(upper)) return 'angola'
+  if (/MEXICO|CNH|TERNIUM MEXICO/.test(upper)) return 'mexico'
+  if (/CANADA|C-NLOPB|NEWFOUNDLAND|LABRADOR/.test(upper)) return 'canada'
+  if (/FPSO|PLATAFORMA|NAVIO|CHARTER|AFRETAMENTO|TUPI|MERO|LIBRA|SEPIA|BUZIOS|TAMANDARE|YINSON|MARLIM|RONCADOR|CAMPOS|CARATINGA|GOLFINHO/.test(upper)) return 'brazil'
+  return 'other'
+}
+
+function regulatorForEntity(entity: EntityGroup | StudyNode): FlowRegulator {
+  const upper = textForEntity(entity).toUpperCase()
+  if (/UK|BUREAU VERITAS|LRQA|ROLLS-ROYCE/.test(upper)) return 'UKCS'
+  if (/USA|GEOQUEST|IBM BRASIL|CSC BRASIL/.test(upper)) return 'BSEE'
+  if (/NORWAY|NORSOK/.test(upper)) return 'NOPSEMA'
+  if (/ANGOLA|ANPG/.test(upper)) return 'ANPG'
+  if (/MEXICO|CNH/.test(upper)) return 'CNH'
+  if (/CANADA|C-NLOPB/.test(upper)) return 'C-NLOPB'
+  if (/AMBIENT|CONTENCAO|DISPERSAO|SPILL|FAUNA|LICENCIAMENTO/.test(upper)) return 'IBAMA'
+  if (/FPSO|PLATAFORMA|NAVIO|CHARTER|AFRETAMENTO|TRANSHIPMENT/.test(upper)) return 'IMO'
+  return 'ANP'
+}
+
+function regionMeta(region: FlowRegion) {
+  if (region === 'netherlands') return 'Dutch wrapper and finance lane'
+  if (region === 'uk') return 'UK assurance / certification lane'
+  if (region === 'usa') return 'US software / service lane'
+  if (region === 'norway') return 'North Sea standards lane'
+  if (region === 'angola') return 'Angola deepwater lane'
+  if (region === 'mexico') return 'Mexico offshore lane'
+  if (region === 'canada') return 'Atlantic Canada lane'
+  if (region === 'brazil') return 'Brazil offshore operating lane'
+  return 'Residual offshore lane'
+}
+
+function regulatorMeta(regulator: FlowRegulator) {
+  if (regulator === 'ANP') return 'Brazil offshore and pre-salt oversight'
+  if (regulator === 'IBAMA') return 'Brazil environmental licensing'
+  if (regulator === 'IMO') return 'Global vessel and offshore unit compliance'
+  if (regulator === 'UKCS') return 'UK offshore certification and assurance'
+  if (regulator === 'BSEE') return 'US Gulf of Mexico and OCS controls'
+  if (regulator === 'NOPSEMA') return 'Australia / North Sea style offshore assurance'
+  if (regulator === 'ANPG') return 'Angola offshore regulatory lane'
+  if (regulator === 'CNH') return 'Mexico offshore regulatory lane'
+  return 'Atlantic Canada offshore lane'
 }
 
 const flowNodeTypes = {
@@ -286,6 +431,8 @@ export default function App() {
   const [filter, setFilter] = useState<ViewFilter>('all')
   const [graphMode, setGraphMode] = useState<GraphMode>('structure')
   const [contracts, setContracts] = useState<ContractRecord[]>([])
+  const [mergedContracts, setMergedContracts] = useState<ContractRecord[]>([])
+  const [otherCompanyContracts, setOtherCompanyContracts] = useState<ContractRecord[]>([])
   const [expanded, setExpanded] = useState(false)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(() => new Set())
   const [selectedId, setSelectedId] = useState<string>('')
@@ -294,8 +441,7 @@ export default function App() {
   const [leftPanelTab, setLeftPanelTab] = useState<'controls' | 'details'>('controls')
   const [tourStep, setTourStep] = useState<number>(0)
   const [categoryFilter, setCategoryFilter] = useState('all')
-  const globeRef = useRef<HTMLDivElement | null>(null)
-  const [globeWidth, setGlobeWidth] = useState(520)
+  const [globeMode, setGlobeMode] = useState<GlobeMode>('bv')
 
   const tourStepsData = useMemo(() => [
     {
@@ -336,18 +482,12 @@ export default function App() {
 
   useEffect(() => {
     const parsed = parseContracts(contractsCsv)
+    const mergedParsed = parseContracts(mergedContractsCsv)
+    const otherParsed = parseContracts(mergedContractsCsv, 'non-bv')
     setContracts(parsed)
+    setMergedContracts(mergedParsed)
+    setOtherCompanyContracts(otherParsed)
     setSelectedId(parsed[0]?.contractNumber || '')
-  }, [])
-
-  useEffect(() => {
-    if (!globeRef.current) return
-    const observer = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width
-      if (width) setGlobeWidth(Math.max(320, Math.floor(width)))
-    })
-    observer.observe(globeRef.current)
-    return () => observer.disconnect()
   }, [])
 
   const grouped = useMemo(() => {
@@ -367,31 +507,9 @@ export default function App() {
     return { byYear, byStatus, bySupplier, byService }
   }, [contracts])
 
-  const entityGroups = useMemo<EntityGroup[]>(() => {
-    const byCanonical = new Map<string, ContractRecord[]>()
-    for (const record of contracts) {
-      const canonical = canonicalEntityName(record.supplier)
-      byCanonical.set(canonical, [...(byCanonical.get(canonical) ?? []), record])
-    }
-    return [...byCanonical.entries()].map(([canonical, records]) => {
-      const aliases = [...new Set(records.map(item => item.supplier))].sort()
-      const amount = records.reduce((sum, item) => sum + parseMoney(item.value), 0)
-      const category = categoryForEntity(canonical, records)
-      const upstream = isUpstreamEntity(canonical)
-      const adjacent = !upstream
-      const aliasRisk = aliasRiskFor(aliases)
-      const procurementSensitive = records.filter(isSensitiveProcurement).length
-      const score = scoreEntity(amount, records.length, upstream, aliasRisk, procurementSensitive)
-      const reasons = [
-        `${records.length} rows`,
-        `${aliases.length} label variant${aliases.length === 1 ? '' : 's'}`,
-        category,
-        aliasRisk === 'high' ? 'alias review needed' : aliasRisk === 'medium' ? 'alias merge candidate' : 'stable label set',
-        `${procurementSensitive} sensitive routes`,
-      ]
-      return { canonical, category, aliases, records, amount, upstream, adjacent, aliasRisk, procurementSensitive, score, reasons }
-    }).sort((a, b) => b.score - a.score || b.amount - a.amount)
-  }, [contracts])
+  const entityGroups = useMemo<EntityGroup[]>(() => buildEntityGroups(contracts), [contracts])
+  const mergedEntityGroups = useMemo<EntityGroup[]>(() => buildEntityGroups(mergedContracts), [mergedContracts])
+  const otherCompanyGroups = useMemo<EntityGroup[]>(() => buildEntityGroups(otherCompanyContracts).slice(0, 36), [otherCompanyContracts])
 
   const supplierCount = useMemo(() => new Set(contracts.map(item => item.supplier)).size, [contracts])
   const canonicalCount = useMemo(() => entityGroups.length, [entityGroups])
@@ -427,53 +545,59 @@ export default function App() {
       : entityGroups.filter(group => group.category === categoryFilter)
     return [...source].sort((a, b) => b.amount - a.amount).slice(0, 12)
   }, [categoryFilter, entityGroups])
-  const globeEntities = useMemo(() => topValueEntities.slice(0, 18), [topValueEntities])
-  const globeArcs = useMemo<GlobeArc[]>(() => {
-    const sourceToNetherlands = globeEntities.slice(0, 10).map((entity, index) => ({
-      entity: entity.canonical,
-      category: entity.category,
-      route: 'contracting-source' as const,
-      value: entity.amount,
-      score: entity.score,
-      startLat: brazilSource.lat,
-      startLng: brazilSource.lng,
-      endLat: netherlandsHub.lat + index * 0.03,
-      endLng: netherlandsHub.lng + index * 0.03,
-      color: '#10b981',
+  const evidenceOnlyGroups = useMemo(() => {
+    const curatedKeys = new Set(studyNodes.map(node => entityKey(node.label)))
+    return mergedEntityGroups
+      .filter(group => !curatedKeys.has(entityKey(group.canonical)))
+      .filter(group => group.amount > 0)
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 14)
+  }, [mergedEntityGroups])
+  const precisionRoutes = useMemo<PrecisionRoute[]>(() => {
+    const bvRoutesFromMap = studyNodes
+      .filter(node => node.id !== 'pnbv')
+      .map(node => ({
+        id: `bv-map-${node.id}`,
+        entity: node.label,
+        category: mapCategoryForNode(node),
+        amount: mergedEntityGroups.find(group => entityKey(group.canonical) === entityKey(node.label))?.amount || parseStudyValue(node.value),
+        score: node.status === 'confirmed' ? 92 : node.status === 'partial' ? 71 : 48,
+        routeType: 'bv' as const,
+        layer: 'bv' as const,
+        region: regionForEntity(node),
+        regulator: regulatorForEntity(node),
+        confidence: node.status,
+      }))
+    const bvRoutesFromEvidence = evidenceOnlyGroups.map(group => ({
+      id: `bv-evidence-${entityKey(group.canonical)}`,
+      entity: group.canonical,
+      category: group.category,
+      amount: group.amount,
+      score: group.score,
+      routeType: 'bv' as const,
+      layer: 'bv' as const,
+      region: regionForEntity(group),
+      regulator: regulatorForEntity(group),
+      confidence: 'evidence-only',
     }))
-    const netherlandsToOffshore = globeEntities.map((entity, index) => {
-      const destination = destinationForEntity(entity, index)
-      return {
-        entity: entity.canonical,
-        category: entity.category,
-        route: 'offshore-deployment' as const,
-        value: entity.amount,
-        score: entity.score,
-        startLat: netherlandsHub.lat,
-        startLng: netherlandsHub.lng,
-        endLat: destination.lat,
-        endLng: destination.lng,
-        color: categoryColor(entity.category),
-      }
-    })
-    return [...sourceToNetherlands, ...netherlandsToOffshore]
-  }, [globeEntities])
-  const globePoints = useMemo<GlobePoint[]>(() => {
-    return [
-      { label: brazilSource.label, lat: brazilSource.lat, lng: brazilSource.lng, size: 0.95, color: '#f8fafc' },
-      { label: netherlandsHub.label, lat: netherlandsHub.lat, lng: netherlandsHub.lng, size: 0.9, color: '#10b981' },
-      ...globeEntities.map((entity, index) => {
-        const destination = destinationForEntity(entity, index)
-        return {
-          label: destination.label,
-          lat: destination.lat,
-          lng: destination.lng,
-          size: Math.max(0.25, Math.min(0.9, entity.amount / Math.max(1, totalValue) * 8)),
-          color: categoryColor(entity.category),
-        }
-      }),
-    ]
-  }, [globeEntities, totalValue])
+    const companyRoutes = otherCompanyGroups.map(group => ({
+      id: `company-${entityKey(group.canonical)}`,
+      entity: group.canonical,
+      category: group.category,
+      amount: group.amount,
+      score: group.score,
+      routeType: 'companies' as const,
+      layer: 'company' as const,
+      region: regionForEntity(group),
+      regulator: regulatorForEntity(group),
+      confidence: 'company-evidence',
+    }))
+    if (globeMode === 'bv') return [...bvRoutesFromMap, ...bvRoutesFromEvidence].slice(0, 18)
+    if (globeMode === 'companies') return companyRoutes.slice(0, 18)
+    return [...bvRoutesFromMap, ...bvRoutesFromEvidence.slice(0, 8), ...companyRoutes.slice(0, 12)]
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 24)
+  }, [evidenceOnlyGroups, globeMode, mergedEntityGroups, otherCompanyGroups])
 
   const metrics = [
     { label: 'B.V. contracts', value: String(contracts.length), caption: 'Rows matched in the CSV' },
@@ -485,6 +609,90 @@ export default function App() {
   ]
 
   const q = search.trim().toLowerCase()
+  const globeTitle = globeMode === 'bv'
+    ? 'B.V. precision routes'
+    : globeMode === 'companies'
+      ? 'Other company precision routes'
+      : 'Cortex synthesis across all mapped layers'
+  const globeRouteNote = globeMode === 'bv'
+    ? 'Brazil contracting source -> Netherlands B.V. wrapper layer -> basin lane -> regulator lane -> mapped B.V. destination.'
+    : globeMode === 'companies'
+      ? 'Brazil contracting source -> Brazil supplier clustering layer -> regional lane -> regulator lane -> non-B.V. supplier cluster.'
+      : 'Brazil contracting source -> wrapper and supplier layers -> basin and jurisdiction lanes -> IOGP framework -> 21 standards coverage -> all downstream entities, using Cortex-style staging.'
+  const iogpDirectCount = iogpCoverageTopics.filter(item => item.coverage === 'direct').length
+  const iogpContextualCount = iogpCoverageTopics.filter(item => item.coverage === 'contextual').length
+  const precisionMap = useMemo(() => {
+    const width = 1160
+    const laneX = {
+      source: 92,
+      hub: 290,
+      region: 540,
+      regulator: 794,
+      entity: 1048,
+    }
+    const staticNodes: PrecisionNode[] = [
+      { id: 'source-brazil', label: stageLabels.source, x: laneX.source, y: 250, kind: 'source', color: '#f8fafc', meta: 'Petrobras procurement source' },
+      ...(globeMode !== 'companies'
+        ? [{ id: 'hub-bv', label: stageLabels.bvHub, x: laneX.hub, y: 165, kind: 'hub' as const, color: '#10b981', meta: 'Offshore wrapper / PNBV lane' }]
+        : []),
+      ...(globeMode !== 'bv'
+        ? [{ id: 'hub-suppliers', label: stageLabels.supplierHub, x: laneX.hub, y: 335, kind: 'hub' as const, color: '#38bdf8', meta: 'Domestic supplier aggregation lane' }]
+        : []),
+      { id: 'region-netherlands', label: stageLabels.netherlands, x: laneX.region, y: 60, kind: 'region', color: '#10b981', meta: regionMeta('netherlands') },
+      { id: 'region-uk', label: stageLabels.uk, x: laneX.region, y: 140, kind: 'region', color: '#f472b6', meta: regionMeta('uk') },
+      { id: 'region-usa', label: stageLabels.usa, x: laneX.region, y: 220, kind: 'region', color: '#38bdf8', meta: regionMeta('usa') },
+      { id: 'region-norway', label: stageLabels.norway, x: laneX.region, y: 300, kind: 'region', color: '#6366f1', meta: regionMeta('norway') },
+      { id: 'region-angola', label: stageLabels.angola, x: laneX.region, y: 380, kind: 'region', color: '#f59e0b', meta: regionMeta('angola') },
+      { id: 'region-mexico', label: stageLabels.mexico, x: laneX.region, y: 460, kind: 'region', color: '#84cc16', meta: regionMeta('mexico') },
+      { id: 'region-canada', label: stageLabels.canada, x: laneX.region, y: 540, kind: 'region', color: '#60a5fa', meta: regionMeta('canada') },
+      { id: 'region-brazil', label: stageLabels.brazil, x: laneX.region, y: 620, kind: 'region', color: '#ef4444', meta: regionMeta('brazil') },
+      { id: 'region-other', label: stageLabels.other, x: laneX.region, y: 700, kind: 'region', color: '#94a3b8', meta: regionMeta('other') },
+      { id: 'reg-anp', label: 'ANP', x: laneX.regulator, y: 70, kind: 'regulator', color: '#facc15', meta: regulatorMeta('ANP') },
+      { id: 'reg-ibama', label: 'IBAMA', x: laneX.regulator, y: 150, kind: 'regulator', color: '#84cc16', meta: regulatorMeta('IBAMA') },
+      { id: 'reg-imo', label: 'IMO', x: laneX.regulator, y: 230, kind: 'regulator', color: '#60a5fa', meta: regulatorMeta('IMO') },
+      { id: 'reg-ukcs', label: 'UKCS', x: laneX.regulator, y: 310, kind: 'regulator', color: '#f472b6', meta: regulatorMeta('UKCS') },
+      { id: 'reg-bsee', label: 'BSEE', x: laneX.regulator, y: 390, kind: 'regulator', color: '#38bdf8', meta: regulatorMeta('BSEE') },
+      { id: 'reg-nopsema', label: 'NOPSEMA', x: laneX.regulator, y: 470, kind: 'regulator', color: '#6366f1', meta: regulatorMeta('NOPSEMA') },
+      { id: 'reg-anpg', label: 'ANPG', x: laneX.regulator, y: 550, kind: 'regulator', color: '#f59e0b', meta: regulatorMeta('ANPG') },
+      { id: 'reg-cnh', label: 'CNH', x: laneX.regulator, y: 630, kind: 'regulator', color: '#84cc16', meta: regulatorMeta('CNH') },
+      { id: 'reg-cnlopb', label: 'C-NLOPB', x: laneX.regulator, y: 710, kind: 'regulator', color: '#60a5fa', meta: regulatorMeta('C-NLOPB') },
+      { id: 'iogp-framework', label: 'IOGP framework', x: laneX.regulator, y: 802, kind: 'regulator', color: '#f97316', meta: 'Framework level: all standards, policies, and workstreams' },
+      { id: 'iogp-standards', label: '21 standards', x: laneX.regulator, y: 874, kind: 'regulator', color: '#fb923c', meta: 'Worldwide coverage spine for standards and guidance' },
+    ]
+    const entityNodes = precisionRoutes.map((route, index) => ({
+      id: `entity-${route.id}`,
+      label: route.entity,
+      x: laneX.entity,
+      y: 54 + index * 28,
+      kind: 'entity' as const,
+      color: categoryColor(route.category),
+      meta: `${route.category} · ${formatMoney(route.amount)}`,
+    }))
+    const nodeMap = new Map<string, PrecisionNode>([...staticNodes, ...entityNodes].map(node => [node.id, node]))
+    const curves = precisionRoutes.map(route => {
+      const start = nodeMap.get('source-brazil')!
+      const hub = nodeMap.get(route.layer === 'bv' ? 'hub-bv' : 'hub-suppliers')!
+      const region = nodeMap.get(`region-${route.region}`) ?? nodeMap.get('region-other')
+      const regulator = nodeMap.get(`reg-${route.regulator.toLowerCase()}`)
+      const entity = nodeMap.get(`entity-${route.id}`)
+      if (!start || !hub || !region || !regulator || !entity) return null
+      const points = [start, hub, region, regulator, entity]
+      const d = points.map((point, index) => {
+        if (index === 0) return `M ${point.x} ${point.y}`
+        const prev = points[index - 1]
+        const cp1x = prev.x + (point.x - prev.x) * 0.48
+        const cp2x = prev.x + (point.x - prev.x) * 0.52
+        return `C ${cp1x} ${prev.y}, ${cp2x} ${point.y}, ${point.x} ${point.y}`
+      }).join(' ')
+      return { route, d }
+    }).filter(Boolean) as Array<{ route: PrecisionRoute; d: string }>
+    return {
+      width,
+      height: Math.max(520, 92 + precisionRoutes.length * 28),
+      nodes: [...staticNodes, ...entityNodes],
+      curves,
+    }
+  }, [globeMode, precisionRoutes])
   const filteredContracts = contracts.filter(record => {
     const status = statusFor(record)
     const year = yearFor(record)
@@ -969,49 +1177,99 @@ export default function App() {
           <article className="cockpit-panel globe-panel">
             <div className="panel-title">
               <span>Globe routing</span>
-              <strong>Brazil source to Dutch wrapper to offshore value field</strong>
+              <strong>{globeTitle}</strong>
             </div>
-            <div ref={globeRef} className="globe-shell">
-              <Globe
-                width={globeWidth}
-                height={430}
-                backgroundColor="rgba(0,0,0,0)"
-                globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
-                bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
-                arcsData={globeArcs}
-                arcStartLat="startLat"
-                arcStartLng="startLng"
-                arcEndLat="endLat"
-                arcEndLng="endLng"
-                arcColor={(arc: object) => {
-                  const flow = arc as GlobeArc
-                  return flow.route === 'contracting-source' ? ['#f8fafc', '#10b981'] : [flow.color, `${flow.color}66`]
-                }}
-                arcAltitude={(arc: object) => {
-                  const flow = arc as GlobeArc
-                  return flow.route === 'contracting-source' ? 0.42 : Math.min(0.55, 0.18 + flow.score / 240)
-                }}
-                arcStroke={(arc: object) => Math.max(0.35, Math.min(1.8, (arc as GlobeArc).value / Math.max(1, totalValue) * 14))}
-                arcDashLength={0.45}
-                arcDashGap={1.2}
-                arcDashAnimateTime={3200}
-                pointsData={globePoints}
-                pointLat="lat"
-                pointLng="lng"
-                pointAltitude={0.015}
-                pointRadius="size"
-                pointColor="color"
-                pointLabel="label"
-                arcsTransitionDuration={700}
-              />
+            <div className="globe-tabs" aria-label="Switch globe evidence layer">
+              <button type="button" className={globeMode === 'bv' ? 'active' : ''} onClick={() => setGlobeMode('bv')}>
+                B.V. globe
+              </button>
+              <button type="button" className={globeMode === 'companies' ? 'active' : ''} onClick={() => setGlobeMode('companies')}>
+                Other companies
+              </button>
+              <button type="button" className={globeMode === 'cortex' ? 'active' : ''} onClick={() => setGlobeMode('cortex')}>
+                Cortex synthesis
+              </button>
+            </div>
+            <div className="globe-shell precision-shell">
+              <svg
+                viewBox={`0 0 ${precisionMap.width} ${precisionMap.height}`}
+                role="img"
+                aria-label={globeTitle}
+                className="precision-map"
+              >
+                <defs>
+                  <linearGradient id="precision-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="rgba(15,23,42,0.96)" />
+                    <stop offset="100%" stopColor="rgba(2,6,23,0.98)" />
+                  </linearGradient>
+                </defs>
+                <rect x="0" y="0" width={precisionMap.width} height={precisionMap.height} rx="24" fill="url(#precision-bg)" />
+                {[92, 290, 540, 794, 1048].map((x, index) => (
+                  <g key={x}>
+                    <line x1={x} y1="36" x2={x} y2={precisionMap.height - 28} className="precision-lane" />
+                    <text x={x} y="26" textAnchor="middle" className="precision-lane-label">
+                      {['Source', 'Routing layer', 'Region', globeMode === 'cortex' ? 'IOGP framework / standards' : 'Regulator', 'Destination'][index]}
+                    </text>
+                  </g>
+                ))}
+                {globeMode === 'cortex' && (
+                  <g>
+                    <rect x="740" y="764" width="360" height="148" rx="14" fill="rgba(249, 115, 22, 0.08)" stroke="rgba(249, 115, 22, 0.28)" />
+                    <text x="920" y="802" textAnchor="middle" className="precision-lane-label" style={{ fill: '#fdba74', fontSize: 12 }}>
+                      IOGP framework
+                    </text>
+                    <text x="920" y="828" textAnchor="middle" className="precision-node-meta">
+                      21 standards coverage worldwide
+                    </text>
+                    <text x="920" y="850" textAnchor="middle" className="precision-node-meta">
+                      {iogpDirectCount} direct / {iogpContextualCount} contextual topics
+                    </text>
+                    <text x="920" y="872" textAnchor="middle" className="precision-node-meta">
+                      Direct lanes: Standards, Safety, Environment, Regions
+                    </text>
+                    <text x="920" y="894" textAnchor="middle" className="precision-node-meta">
+                      Contextual bridges: JIP30, JIP33, JIP35, CFIHOS, JIP39
+                    </text>
+                  </g>
+                )}
+                {precisionMap.curves.map(({ route, d }) => (
+                  <path
+                    key={route.id}
+                    d={d}
+                    className={`precision-route ${route.layer}`}
+                    style={{
+                      stroke: categoryColor(route.category),
+                      strokeWidth: Math.max(1.4, Math.min(4.4, route.amount / Math.max(1, totalValue) * 26)),
+                      opacity: route.layer === 'bv' ? 0.9 : 0.76,
+                    }}
+                  />
+                ))}
+                {precisionMap.nodes.map(node => (
+                  <g key={node.id} transform={`translate(${node.x}, ${node.y})`} className={`precision-node ${node.kind}`}>
+                    <circle r={node.kind === 'entity' ? 7 : 10} fill={node.color} stroke="rgba(255,255,255,0.2)" />
+                    <text x={node.kind === 'entity' ? 14 : 18} y="-2" className="precision-node-label">
+                      {node.label}
+                    </text>
+                    {node.meta && (
+                      <text x={node.kind === 'entity' ? 14 : 18} y="12" className="precision-node-meta">
+                        {node.meta}
+                      </text>
+                    )}
+                  </g>
+                ))}
+              </svg>
             </div>
             <div className="flow-route-note">
               <strong>Route model</strong>
-              <span>{'Brazil contracting source -> Netherlands B.V. wrapper -> inferred offshore basin, field, asset, or adjacent spend destination.'}</span>
+              <span>{globeRouteNote}</span>
             </div>
             <div className="globe-legend">
               <span><i style={{ background: '#f8fafc' }} />Brazil contracting source</span>
-              <span><i style={{ background: '#10b981' }} />Dutch wrapper route</span>
+              {(globeMode === 'bv' || globeMode === 'cortex') && <span><i style={{ background: '#10b981' }} />Netherlands wrapper layer</span>}
+              {(globeMode === 'companies' || globeMode === 'cortex') && <span><i style={{ background: '#38bdf8' }} />Brazil supplier clustering layer</span>}
+              <span><i style={{ background: '#f59e0b' }} />Regional operating lanes</span>
+              <span><i style={{ background: '#facc15' }} />Regulator lanes</span>
+              {globeMode === 'cortex' && <span><i style={{ background: '#f97316' }} />IOGP framework + 21 standards</span>}
               {['Hub / trading wrapper', 'FPSO / production SPV', 'Drilling vehicle', 'Field-linked wrapper', 'Software / data vendor'].map(category => (
                 <span key={category}><i style={{ background: categoryColor(category) }} />{category}</span>
               ))}
