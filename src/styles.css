@@ -238,6 +238,144 @@ main { padding-bottom: 64px; }
   gap: 14px;
   padding: 0 5vw 2rem;
 }
+
+.study-bot-section {
+  padding: 0 5vw 2rem;
+}
+
+.study-bot-panel {
+  padding: 22px;
+  background:
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(24, 24, 27, 0.72), rgba(15, 15, 17, 0.88));
+}
+
+.study-bot-lead {
+  margin: 0 0 18px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.study-bot-pills {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.study-bot-pills button {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.study-bot-pills button:hover,
+.study-bot-pills button.active {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.14);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.12) inset;
+}
+
+.study-bot-thread {
+  display: grid;
+  gap: 12px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.study-bot-input {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.study-bot-input textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 92px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  padding: 14px 16px;
+  outline: none;
+}
+
+.study-bot-input textarea:focus {
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
+}
+
+.study-bot-input-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.study-bot-send {
+  border: 1px solid rgba(16, 185, 129, 0.55);
+  background: rgba(16, 185, 129, 0.16);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.study-bot-send:hover {
+  background: rgba(16, 185, 129, 0.24);
+}
+
+.study-bot-message {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  max-width: 920px;
+}
+
+.study-bot-message span {
+  display: block;
+  margin-bottom: 8px;
+  font: 500 11px 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+}
+
+.study-bot-message p {
+  margin: 0;
+  color: #ede9d8;
+  line-height: 1.7;
+}
+
+.study-bot-message.bot {
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.study-bot-message.user {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.study-bot-footnote {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.study-bot-footnote strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #fff;
+}
+
+.study-bot-footnote span {
+  color: var(--muted);
+  line-height: 1.6;
+}
 .cockpit-lead,
 .cockpit-panel {
   border: 1px solid var(--line);

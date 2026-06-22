@@ -13,8 +13,8 @@ import {
 } from 'reactflow'
 import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Landmark, Search, CircleDollarSign, X, Compass } from 'lucide-react'
 import { sourceLinks, studyNodes, studyTimeline, type StudyNode } from './data'
-import contractsCsv from '../Consulta (17).csv?raw'
-import mergedContractsCsv from '../Consulta (19).csv?raw'
+import contractsCsv from '../Consulta (merged).csv?raw'
+import mergedContractsCsv from '../Consulta (merged).csv?raw'
 import './styles.css'
 
 type ViewFilter = 'all' | 'supplier' | 'active' | 'completed' | 'cancelled' | `year-${string}`
@@ -87,6 +87,13 @@ type PrecisionNode = {
   kind: 'source' | 'hub' | 'region' | 'regulator' | 'entity'
   color: string
   meta?: string
+}
+
+type StudyBotMode = 'overview' | 'macae' | 'reporting' | 'risk' | 'timeline'
+
+type StudyBotMessage = {
+  speaker: 'bot' | 'user'
+  text: string
 }
 
 const iogpCoverageTopics = [
@@ -426,6 +433,74 @@ const flowNodeTypes = {
   ),
 }
 
+const studyBotPrompts: Array<{ key: StudyBotMode; label: string; prompt: string }> = [
+  { key: 'overview', label: 'Explain the study', prompt: 'Explain the study in plain English.' },
+  { key: 'macae', label: 'Why Macaé?', prompt: 'Why does Macaé matter in this study?' },
+  { key: 'reporting', label: 'Reporting caveat', prompt: 'What is wrong with the nominal source value and mixed currencies?' },
+  { key: 'risk', label: 'Risk lens', prompt: 'What is the governance risk here?' },
+  { key: 'timeline', label: '2017 context', prompt: 'Explain the 2017 timeline marker carefully.' },
+]
+
+function buildStudyBotReply(mode: StudyBotMode, context: {
+  canonicalCount: number
+  supplierCount: number
+  topValueLabel: string
+  topShare: number
+  availableYears: string[]
+  language: 'pt' | 'en'
+}) {
+  const firstYear = context.availableYears[0] ?? 'n/a'
+  const lastYear = context.availableYears.at(-1) ?? 'n/a'
+
+  if (context.language === 'pt') {
+    switch (mode) {
+      case 'macae':
+        return 'Macaé é a dobradiça operacional. É ali que execução offshore, coordenação de fornecedores e suporte se encontram, então o lugar funciona como lente prática para entender por que a estrutura se concentra nesse ponto.'
+      case 'reporting':
+        return 'O valor nominal da fonte é um artefato de divulgação, não um total econômico normalizado. Moedas misturadas sem conversão cambial tornam a cifra incomparável e criam um ponto cego de reporte. O número é enorme, mas não está pronto para auditoria como um agregado limpo.'
+      case 'risk':
+        return 'O risco aqui é opacidade de governança, não uma conclusão jurídica fechada. Concentração, variação de aliases, wrappers de longa duração e rotas de contratação que reduzem a legibilidade pública justificam revisão reforçada, rastreabilidade e controle de aliases.'
+      case 'timeline':
+        return '2017 entra no estudo como marcador de transição, especialmente se você estiver ligando isso à saída de um executivo da Petrobras. Se esse ponto importa analiticamente, ele precisa de uma fonte nomeada; caso contrário, continua sendo apenas um timestamp contextual.'
+      default:
+        return `O estudo mapeia ${context.canonicalCount} grupos canônicos de B.V. em ${context.supplierCount} rótulos de fornecedores e ${context.availableYears.length} anos visíveis (${firstYear} a ${lastYear}). A maior concentração está em ${context.topValueLabel}, que sozinho representa cerca de ${context.topShare.toFixed(1)}% do valor nominal. O ponto não é acusação; é legibilidade.`
+    }
+  }
+
+  switch (mode) {
+    case 'macae':
+      return 'Macaé is the operational hinge. It is where offshore execution, vendor coordination, and support activity converge, so it works as a practical lens for understanding why the structure concentrates there.'
+    case 'reporting':
+      return 'The nominal source value is a disclosure artifact, not a normalized economic total. Mixed currencies without FX conversion make the figure non-comparable and create a reporting blind spot. The number is huge, but it is not audit-ready as one clean aggregate.'
+    case 'risk':
+      return 'The risk is governance opacity, not a predefined legal finding. Concentration, alias variation, long-duration wrappers, and procurement pathways that reduce public legibility all justify enhanced review, traceability, and alias control.'
+    case 'timeline':
+      return '2017 belongs in the study as a transition marker, especially if you are tying it to a Petrobras executive departure. If that point matters analytically, it should be documented with a named source; otherwise it stays a contextual timestamp, not a standalone assertion.'
+    default:
+      return `The study maps ${context.canonicalCount} canonical B.V. groups across ${context.supplierCount} supplier labels and ${context.availableYears.length} visible years (${firstYear} to ${lastYear}). The biggest concentration sits with ${context.topValueLabel}, which alone represents about ${context.topShare.toFixed(1)}% of nominal value. The point is not accusation; it is legibility.`
+  }
+}
+
+function buildStudyBotReplyFromQuery(query: string, context: {
+  canonicalCount: number
+  supplierCount: number
+  topValueLabel: string
+  topShare: number
+  availableYears: string[]
+}) {
+  const lower = query.toLowerCase()
+  const language: 'pt' | 'en' = /[ãõçáéíóúêôà]/i.test(query) || /\b(o que|explique|maca[eé]|reporte|governança|risco|ano|valor)\b/i.test(query) ? 'pt' : 'en'
+  if (!lower.trim()) return buildStudyBotReply('overview', { ...context, language })
+  const nextContext = { ...context, language }
+  if (/(maca[ée]|macae)/.test(lower)) return buildStudyBotReply('macae', nextContext)
+  if (/2017|departure|left|executive|saída|saiu/.test(lower)) return buildStudyBotReply('timeline', nextContext)
+  if (/fx|currency|mixed currencies|nominal source value|conversion|moedas|câmbio|cambio|valor nominal/.test(lower)) return buildStudyBotReply('reporting', nextContext)
+  if (/risk|governance|opacity|evasion|blind spot|compliance|risco|governança|opacidade/.test(lower)) return buildStudyBotReply('risk', nextContext)
+  return language === 'pt'
+    ? `Resposta curta: ${buildStudyBotReply('overview', nextContext)}`
+    : `Short answer: ${buildStudyBotReply('overview', nextContext)}`
+}
+
 export default function App() {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<ViewFilter>('all')
@@ -442,6 +517,14 @@ export default function App() {
   const [tourStep, setTourStep] = useState<number>(0)
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [globeMode, setGlobeMode] = useState<GlobeMode>('bv')
+  const [studyBotMode, setStudyBotMode] = useState<StudyBotMode>('overview')
+  const [studyBotInput, setStudyBotInput] = useState('')
+  const [studyBotMessages, setStudyBotMessages] = useState<StudyBotMessage[]>([
+    {
+      speaker: 'bot',
+      text: 'I am the study bot. Ask me for the plain-English version of the network, Macaé, 2017, the reporting caveat, or the governance risk.',
+    },
+  ])
 
   const tourStepsData = useMemo(() => [
     {
@@ -526,6 +609,14 @@ export default function App() {
   const aliasReviewEntities = useMemo(() => entityGroups.filter(group => group.aliasRisk !== 'low' || group.aliases.length > 1), [entityGroups])
   const procurementSensitiveRows = useMemo(() => contracts.filter(isSensitiveProcurement).length, [contracts])
   const topEntityShare = totalValue ? ((topValueEntities[0]?.amount ?? 0) / totalValue) * 100 : 0
+  const studyBotReply = useMemo(() => buildStudyBotReply(studyBotMode, {
+    canonicalCount,
+    supplierCount,
+    topValueLabel: topValueEntities[0]?.canonical ?? 'n/a',
+    topShare: topEntityShare,
+    availableYears,
+    language: 'en',
+  }), [availableYears, canonicalCount, supplierCount, studyBotMode, topEntityShare, topValueEntities])
   const taxonomy = useMemo(() => {
     const byCategory = new Map<string, EntityGroup[]>()
     for (const group of entityGroups) {
@@ -619,6 +710,35 @@ export default function App() {
     : globeMode === 'companies'
       ? 'Brazil contracting source -> Brazil supplier clustering layer -> regional lane -> regulator lane -> non-B.V. supplier cluster.'
       : 'Brazil contracting source -> wrapper and supplier layers -> basin and jurisdiction lanes -> IOGP framework -> 21 standards coverage -> all downstream entities, using Cortex-style staging.'
+  
+  useEffect(() => {
+    setStudyBotMessages(messages => {
+      const last = messages[messages.length - 1]
+      if (last?.speaker === 'bot' && last.text === studyBotReply) return messages
+      return [...messages, { speaker: 'bot', text: studyBotReply }]
+    })
+  }, [studyBotReply])
+
+  const sendStudyBotPrompt = (mode: StudyBotMode, prompt: string) => {
+    setStudyBotMode(mode)
+    setStudyBotMessages(messages => [...messages, { speaker: 'user', text: prompt }])
+  }
+
+  const submitStudyBotQuery = () => {
+    const prompt = studyBotInput.trim()
+    if (!prompt) return
+    setStudyBotMessages(messages => {
+      const reply = buildStudyBotReplyFromQuery(prompt, {
+        canonicalCount,
+        supplierCount,
+        topValueLabel: topValueEntities[0]?.canonical ?? 'n/a',
+        topShare: topEntityShare,
+        availableYears,
+      })
+      return [...messages, { speaker: 'user', text: prompt }, { speaker: 'bot', text: reply }]
+    })
+    setStudyBotInput('')
+  }
   const iogpDirectCount = iogpCoverageTopics.filter(item => item.coverage === 'direct').length
   const iogpContextualCount = iogpCoverageTopics.filter(item => item.coverage === 'contextual').length
   const precisionMap = useMemo(() => {
@@ -1520,6 +1640,53 @@ export default function App() {
               </ReactFlowProvider>
             </div>
           </div>
+        </section>
+
+        <section className="section study-bot-section">
+          <article className="panel study-bot-panel">
+            <div className="section-head compact">
+              <div>
+                <div className="eyebrow">Study bot</div>
+                <h2>Ask the study to explain itself</h2>
+              </div>
+              <FileSearch size={18} />
+            </div>
+            <p className="study-bot-lead">
+              This bot gives a plain-English reading of the study, Macaé, the 2017 context marker, the reporting caveat, and the governance risk.
+            </p>
+            <div className="study-bot-pills">
+              {studyBotPrompts.map(item => (
+                <button key={item.key} type="button" className={studyBotMode === item.key ? 'active' : ''} onClick={() => sendStudyBotPrompt(item.key, item.prompt)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="study-bot-thread" aria-live="polite">
+              {studyBotMessages.slice(-6).map((message, index) => (
+                <div key={`${message.speaker}-${index}-${message.text.slice(0, 12)}`} className={`study-bot-message ${message.speaker}`}>
+                  <span>{message.speaker === 'bot' ? 'Bot' : 'You'}</span>
+                  <p>{message.text}</p>
+                </div>
+              ))}
+            </div>
+            <div className="study-bot-input">
+              <textarea
+                value={studyBotInput}
+                onChange={event => setStudyBotInput(event.target.value)}
+                placeholder="Ask anything: Macaé, 2017, mixed currencies, blind spot, governance risk..."
+                rows={3}
+              />
+              <div className="study-bot-input-actions">
+                <button type="button" className="study-bot-send" onClick={submitStudyBotQuery}>
+                  Ask the bot
+                </button>
+              </div>
+            </div>
+            <div className="study-bot-footnote">
+              <strong>Current read</strong>
+              <span>{studyBotReply}</span>
+            </div>
+          </article>
         </section>
 
         <section className="section split">

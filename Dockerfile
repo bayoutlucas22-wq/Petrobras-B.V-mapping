@@ -8,6 +8,6 @@ RUN npm run build
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY ["Consulta (17).csv", "/usr/share/nginx/html/Consulta (17).csv"]
+COPY ["Consulta (merged).csv", "/usr/share/nginx/html/Consulta (merged).csv"]
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

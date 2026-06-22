@@ -185,6 +185,34 @@ If this were running inside a mature compliance program, the next controls would
 5. Escalate unresolved aliases that affect money-flow interpretation.
 6. Preserve source-row traceability for every normalized label.
 
+## Step-By-Step Understanding
+
+This is the cleanest way to explain the study logic in sequence:
+
+1. Start with the raw source rows and the nominal values they report.
+2. Normalize entity labels so `Petrobras Netherlands B.V.`, `Petrobras Netherlands B.V. - PNBV`, and similar variants are not treated as separate economic realities unless evidence proves otherwise.
+3. Group the rows by contract purpose, counterparty, and procurement route.
+4. Separate upstream asset vehicles from adjacent vendors and service providers.
+5. Look for value concentration, recurrence, and long-duration exposure.
+6. Keep the legal basis attached to each row so the procurement path stays visible.
+7. Compare the nominal totals against the actual economic story, especially when currencies are mixed and FX conversion is missing.
+
+## Macaé Context
+
+Macaé matters because it is one of the operational centers where Petrobras offshore execution, vendor coordination, and support activity converge. In practical terms, that means Macaé is not just a geographic reference; it is part of the control surface where contracts, services, and offshore operations meet.
+
+For this study, Macaé should be treated as an operational lens:
+
+- it helps explain why offshore-linked entities and support wrappers cluster around the same commercial ecosystem
+- it gives the study a concrete place to anchor the offshore operating model
+- it shows how governance pressure concentrates where field operations, logistics, and procurement intersect
+
+If the 2017 reference is the point where a Petrobras executive departure changed the local operating picture, it should be framed carefully in the study as a timeline marker unless a named source is added. In other words, use it as context for organizational transition, not as a standalone allegation.
+
+### Suggested wording for the study
+
+`Macaé is the operational hinge: the offshore ecosystem, the vendor network, and the governance burden all converge there. If 2017 marked the departure of a Petrobras executive, that year becomes a useful transition point for the study timeline, but it should be documented with a named source before it is treated as fact.`
+
 ## Bottom Line
 
 The Petrobras B.V. map is not just a map of companies. It is a governed money-flow network. The compliance value is in the correlation layer: who absorbs spend, how much is recurring, which structures are upstream-critical, and where alias ambiguity could distort the picture.
